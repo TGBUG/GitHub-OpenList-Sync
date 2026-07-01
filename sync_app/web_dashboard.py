@@ -1,0 +1,287 @@
+"""Flask web dashboard for monitoring and controlling sync operations."""
+
+import logging
+import threading
+import time
+from datetime import datetime, timezone
+
+from flask import Flask, jsonify, request
+
+from sync_app.failure_manager import FailureManager
+from sync_app.models import SyncState
+
+logger = logging.getLogger("github_sync")
+
+# ---------------------------------------------------------------------------
+# Inline HTML page
+# ---------------------------------------------------------------------------
+
+DASHBOARD_HTML = r"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GitHub Sync - Dashboard</title>
+<style>
+  :root{--bg:#0f1117;--card:#1a1d27;--border:#2a2d3a;--text:#c9d1d9;--text-dim:#8b949e;--accent:#58a6ff;--green:#3fb950;--red:#f85149;--yellow:#d29922;--orange:#db6d28}
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text);line-height:1.5;min-height:100vh}
+  .container{max-width:960px;margin:0 auto;padding:24px 16px}
+  .header{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;flex-wrap:wrap;gap:12px}
+  .header h1{font-size:22px;font-weight:600}
+  .status-badge{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:20px;font-size:13px;font-weight:500}
+  .status-badge.running{background:#1a3a2a;color:var(--green)}
+  .status-badge.idle{background:#1a1d27;color:var(--text-dim)}
+  .status-badge.paused{background:#3a2a1a;color:var(--yellow)}
+  .status-dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+  .status-dot.running{background:var(--green);animation:pulse 1.5s infinite}
+  .status-dot.idle{background:var(--text-dim)}
+  .status-dot.paused{background:var(--yellow)}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:16px 20px;margin-bottom:16px}
+  .card-title{font-size:13px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:12px}
+  .btn-row{display:flex;gap:8px;flex-wrap:wrap}
+  button{padding:8px 18px;border:none;border-radius:6px;font-size:13px;font-weight:500;cursor:pointer;transition:opacity .15s}
+  button:hover{opacity:0.85}
+  button:disabled{opacity:0.4;cursor:not-allowed}
+  .btn-start{background:#1a3a2a;color:var(--green);border:1px solid #1f4d32}
+  .btn-stop{background:#3a1a1a;color:var(--red);border:1px solid #4d1f1f}
+  .btn-retry{background:#2a2a1a;color:var(--yellow);border:1px solid #4d4d1f}
+  .progress-bar-bg{background:var(--bg);border-radius:6px;height:8px;margin:8px 0;overflow:hidden}
+  .progress-bar-fill{background:var(--accent);height:100%;border-radius:6px;transition:width .3s}
+  .stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin-bottom:8px}
+  .stat-item{text-align:center}
+  .stat-value{font-size:28px;font-weight:700}
+  .stat-label{font-size:12px;color:var(--text-dim);margin-top:2px}
+  .current-task{font-size:13px;color:var(--text-dim);margin-top:8px;word-break:break-all}
+  .current-task span{color:#58a6ff}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);color:var(--text-dim);font-weight:500;font-size:12px}
+  td{padding:8px 10px;border-bottom:1px solid var(--border)}
+  td.time{color:var(--text-dim);white-space:nowrap}
+  td.path{font-family:'SF Mono',Consolas,monospace;font-size:12px;word-break:break-all}
+  td.error{color:var(--red);font-size:12px;max-width:280px;word-break:break-all}
+  .empty-state{text-align:center;padding:24px;color:var(--text-dim)}
+  .sync-time{font-size:13px;color:var(--text-dim)}
+  .sync-time strong{color:var(--text)}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <h1>GitHub &rarr; OpenList Sync</h1>
+    <div>
+      <span id="statusBadge" class="status-badge idle"><span class="status-dot idle"></span><span id="statusText">Idle</span></span>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div class="card">
+    <div class="card-title">Controls</div>
+    <div class="btn-row">
+      <button class="btn-start" id="btnStart" onclick="startSync()">Start Sync</button>
+      <button class="btn-stop" id="btnStop" onclick="stopSync()">Force Stop</button>
+      <button class="btn-retry" id="btnRetry" onclick="retryFailures()">Retry Failures</button>
+    </div>
+    <div class="sync-time" style="margin-top:10px">Last sync: <strong id="lastSync">Never</strong></div>
+  </div>
+
+  <!-- Progress -->
+  <div class="card">
+    <div class="card-title">Progress</div>
+    <div class="stat-grid">
+      <div class="stat-item"><div class="stat-value" id="totalFiles">-</div><div class="stat-label">Total</div></div>
+      <div class="stat-item"><div class="stat-value" style="color:var(--green)" id="completedFiles">-</div><div class="stat-label">Completed</div></div>
+      <div class="stat-item"><div class="stat-value" style="color:var(--red)" id="failedFiles">-</div><div class="stat-label">Failed</div></div>
+      <div class="stat-item"><div class="stat-value" style="color:var(--orange)" id="deletedFiles">-</div><div class="stat-label">Deleted</div></div>
+    </div>
+    <div class="progress-bar-bg"><div class="progress-bar-fill" id="progressBar" style="width:0%"></div></div>
+    <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-dim)">
+      <span id="progressPct">0%</span><span id="progressRatio">0 / 0</span>
+    </div>
+    <div class="current-task" id="currentTask" style="display:none">Processing: <span id="currentFile">-</span></div>
+  </div>
+
+  <!-- Failures -->
+  <div class="card">
+    <div class="card-title">Failure Records</div>
+    <div id="failuresContainer">
+      <table id="failuresTable" style="display:none">
+        <thead><tr><th>Time</th><th>Repo</th><th>File</th><th>Retries</th><th>Error</th></tr></thead>
+        <tbody id="failuresBody"></tbody>
+      </table>
+      <div class="empty-state" id="failuresEmpty">No failures recorded.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const POLL_INTERVAL = 3000;
+
+  function fmtTime(ts){if(!ts)return'Never';return new Date(ts*1000).toLocaleString()}
+
+  async function poll(){
+    try{
+      const r=await fetch('/api/status');
+      const s=await r.json();
+      updateUI(s);
+      // Also fetch failures
+      const f=await fetch('/api/failures');
+      const failures=await f.json();
+      updateFailures(failures);
+    }catch(e){console.error('Poll error:',e)}
+    setTimeout(poll,POLL_INTERVAL);
+  }
+
+  function updateUI(s){
+    // Status
+    const badge=document.getElementById('statusBadge');
+    const dot=badge.querySelector('.status-dot');
+    const text=document.getElementById('statusText');
+    badge.className='status-badge';dot.className='status-dot';
+    if(s.is_running){
+      badge.classList.add('running');dot.classList.add('running');text.textContent='Running';
+      document.getElementById('btnStop').disabled=false;
+    }else if(s.stop_requested){
+      badge.classList.add('paused');dot.classList.add('paused');text.textContent='Stopping...';
+      document.getElementById('btnStop').disabled=true;
+    }else{
+      badge.classList.add('idle');dot.classList.add('idle');text.textContent='Idle';
+      document.getElementById('btnStop').disabled=true;
+    }
+    document.getElementById('btnStart').disabled=s.is_running;
+    document.getElementById('btnRetry').disabled=s.is_running;
+    document.getElementById('lastSync').textContent=fmtTime(s.last_sync_time);
+    document.getElementById('totalFiles').textContent=s.total_files||'-';
+    document.getElementById('completedFiles').textContent=s.completed_files||'-';
+    document.getElementById('failedFiles').textContent=s.failed_files||'-';
+    document.getElementById('deletedFiles').textContent=s.deleted_files||'-';
+    document.getElementById('progressPct').textContent=(s.progress_pct||0)+'%';
+    document.getElementById('progressRatio').textContent=(s.completed_files||0)+' / '+(s.total_files||0);
+    document.getElementById('progressBar').style.width=(s.progress_pct||0)+'%';
+
+    const taskDiv=document.getElementById('currentTask');
+    if(s.current_file){
+      taskDiv.style.display='block';
+      document.getElementById('currentFile').textContent=(s.current_repo?('['+s.current_repo+'] '):'')+s.current_file;
+    }else{
+      taskDiv.style.display='none';
+    }
+  }
+
+  function updateFailures(failures){
+    const table=document.getElementById('failuresTable');
+    const body=document.getElementById('failuresBody');
+    const empty=document.getElementById('failuresEmpty');
+    if(!failures||failures.length===0){
+      table.style.display='none';empty.style.display='block';return;
+    }
+    table.style.display='';empty.style.display='none';
+    body.innerHTML=failures.map(f=>
+      '<tr>'+
+        '<td class="time">'+fmtTime(f.timestamp)+'</td>'+
+        '<td>'+esc(f.repo_name)+'</td>'+
+        '<td class="path">'+esc(f.file_path)+'</td>'+
+        '<td>'+f.retry_count+'</td>'+
+        '<td class="error" title="'+esc(f.error_message)+'">'+esc(f.error_message).substring(0,100)+'</td>'+
+      '</tr>'
+    ).join('');
+  }
+
+  function esc(s){if(!s)return'';const d=document.createElement('div');d.textContent=s;return d.innerHTML}
+
+  async function startSync(){
+    try{await fetch('/api/sync/start',{method:'POST'});}catch(e){alert('Failed to start: '+e)}
+  }
+  async function stopSync(){
+    if(!confirm('Stop the current sync operation?'))return;
+    try{await fetch('/api/sync/stop',{method:'POST'});}catch(e){alert('Failed to stop: '+e)}
+  }
+  async function retryFailures(){
+    try{const r=await fetch('/api/failures/retry',{method:'POST'});const d=await r.json();alert(d.message||'Retry queued');}catch(e){alert('Failed: '+e)}
+  }
+
+  poll();
+</script>
+</body>
+</html>"""
+
+
+def create_app(sync_state: SyncState, failure_manager: FailureManager, sync_trigger: callable) -> Flask:
+    """Build the Flask dashboard application."""
+    app = Flask(__name__)
+
+    # Suppress Flask's default request log in production
+    flask_log = logging.getLogger("werkzeug")
+    flask_log.setLevel(logging.WARNING)
+
+    # ------------------------------------------------------------------
+    # Routes
+    # ------------------------------------------------------------------
+
+    @app.route("/")
+    def index():
+        return DASHBOARD_HTML, 200, {"Content-Type": "text/html; charset=utf-8"}
+
+    @app.route("/api/status")
+    def api_status():
+        return jsonify(sync_state.to_dict())
+
+    @app.route("/api/sync/start", methods=["POST"])
+    def api_start():
+        if sync_state.is_running:
+            return jsonify({"ok": False, "message": "Sync is already running"}), 409
+        sync_trigger()
+        return jsonify({"ok": True, "message": "Sync started"})
+
+    @app.route("/api/sync/stop", methods=["POST"])
+    def api_stop():
+        if not sync_state.is_running:
+            return jsonify({"ok": False, "message": "No sync is running"}), 409
+        sync_state.stop_requested = True
+        logger.info("Stop requested via dashboard")
+        return jsonify({"ok": True, "message": "Stop signal sent"})
+
+    @app.route("/api/failures")
+    def api_failures():
+        return jsonify(failure_manager.get_all_failures())
+
+    @app.route("/api/failures/retry", methods=["POST"])
+    def api_retry_failures():
+        if sync_state.is_running:
+            return jsonify({"ok": False, "message": "Cannot retry while sync is running"}), 409
+        count = len(failure_manager.get_all_failures())
+        failure_manager.clear_all_failures()
+        logger.info("Failure records cleared. %d record(s) will be retried on next sync.", count)
+        return jsonify({"ok": True, "message": f"Cleared {count} failure record(s). Next sync will retry these files."})
+
+    return app
+
+
+class DashboardRunner:
+    """Runs the Flask dashboard in a daemon thread."""
+
+    def __init__(
+        self,
+        sync_state: SyncState,
+        failure_manager: FailureManager,
+        sync_trigger: callable,
+        host: str = "0.0.0.0",
+        port: int = 8080,
+    ):
+        self.app = create_app(sync_state, failure_manager, sync_trigger)
+        self.host = host
+        self.port = port
+        self._thread: threading.Thread | None = None
+
+    def start(self):
+        """Start the dashboard in a daemon thread."""
+        self._thread = threading.Thread(target=self._run, daemon=True, name="dashboard")
+        self._thread.start()
+        logger.info("Dashboard started at http://%s:%d", self.host, self.port)
+
+    def _run(self):
+        try:
+            self.app.run(host=self.host, port=self.port, debug=False, use_reloader=False)
+        except Exception as e:
+            logger.error("Dashboard server error: %s", e)

@@ -1,0 +1,11 @@
+.idea/
+
+data/
+
+logs/
+
+config.yaml
+
+temp/
+
+.venv/

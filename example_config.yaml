@@ -1,0 +1,25 @@
+# GitHub → OpenList Sync Configuration
+# =====================================
+
+github:
+  username: ""                # GitHub username whose repositories to sync
+  token: ""                   # Optional: GitHub personal access token (increases rate limit to 5000/hr)
+
+openlist:
+  base_url: ""                # OpenList instance URL (e.g. https://your-instance.oplist.org.cn)
+  username: ""                # OpenList login username
+  password: ""                # OpenList login password
+  target_directory: "/github-sync"  # Root directory on OpenList where synced repos will be placed
+
+sync:
+  interval_hours: 6           # Time between automatic sync cycles
+  max_threads: 4              # Maximum concurrent worker threads
+  max_retries: 3              # Maximum retry attempts per failed file
+  retry_interval_seconds: 30  # Seconds to wait before retrying a failed file
+  max_failures_per_minute: 10 # Pause sync if failures exceed this rate
+  cooldown_minutes: 5         # Cooldown period after consecutive failures
+  mirror_delete: true         # Delete files on OpenList that no longer exist on GitHub
+
+web:
+  host: "0.0.0.0"             # Dashboard listen address
+  port: 8080                  # Dashboard web port
