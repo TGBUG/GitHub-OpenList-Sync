@@ -9,7 +9,8 @@
 ## 用法
 
 ```bash
-git clone TGBUG/GitHub-OpenList-Sync
+git clone https://github.com/TGBUG/GitHub-OpenList-Sync
+cd GitHub-OpenList-Sync
 cp example_config.yaml config.yaml
 ```
 
