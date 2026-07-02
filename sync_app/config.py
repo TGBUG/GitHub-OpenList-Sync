@@ -1,6 +1,7 @@
 """Configuration loader and validator."""
 
 import os
+import secrets
 from typing import Any, Optional
 
 import yaml
@@ -25,6 +26,10 @@ class Config:
             if section not in self._data:
                 raise ValueError(f"Missing required config section: [{section}]")
 
+        github = self._data["github"]
+        if not github.get("username") and not github.get("usernames"):
+            raise ValueError("github.username or github.usernames must be configured")
+
         sync = self._data["sync"]
         required_sync = [
             "interval_hours", "max_threads", "max_retries",
@@ -41,19 +46,59 @@ class Config:
             if sync[key] < 0:
                 raise ValueError(f"sync.{key} must be >= 0")
 
+        # Validate auth section if present
+        auth = self._data.get("auth", {})
+        if auth:
+            if auth.get("username") and not auth.get("password"):
+                raise ValueError("auth.password is required when auth.username is set")
+            if auth.get("password") and not auth.get("username"):
+                raise ValueError("auth.username is required when auth.password is set")
+
+        # Validate filter_mode
+        filter_mode = github.get("filter_mode", "blacklist")
+        if filter_mode not in ("blacklist", "whitelist"):
+            raise ValueError("github.filter_mode must be 'blacklist' or 'whitelist'")
+
     def save(self):
         with open(self._config_path, "w", encoding="utf-8") as f:
             yaml.safe_dump(self._data, f, default_flow_style=False, allow_unicode=True)
 
-    # -- GitHub --
+    # -- GitHub: usernames --
     @property
-    def github_username(self) -> str:
-        return self._data["github"].get("username", "")
+    def github_usernames(self) -> list[str]:
+        """Return list of GitHub usernames to sync. Supports legacy single-username config."""
+        usernames = self._data["github"].get("usernames")
+        if usernames and isinstance(usernames, list):
+            return [u for u in usernames if u]
+        single = self._data["github"].get("username", "")
+        return [single] if single else []
 
     @property
     def github_token(self) -> Optional[str]:
         token = self._data["github"].get("token", "")
         return token if token else None
+
+    @property
+    def sync_private_repos(self) -> bool:
+        return self._data["github"].get("sync_private_repos", False)
+
+    @property
+    def filter_mode(self) -> str:
+        return self._data["github"].get("filter_mode", "blacklist")
+
+    @property
+    def repo_filter_list(self) -> list[str]:
+        return self._data["github"].get("repo_filter_list", [])
+
+    def is_repo_allowed(self, full_name: str) -> bool:
+        """Check if a repo (format: 'owner/repo') should be synced based on filter config."""
+        filter_list = self.repo_filter_list
+        if not filter_list:
+            return True
+        if self.filter_mode == "whitelist":
+            return full_name in filter_list
+        else:
+            return full_name not in filter_list
 
     # -- OpenList --
     @property
@@ -109,3 +154,26 @@ class Config:
     @property
     def web_port(self) -> int:
         return self._data["web"].get("port", 8080)
+
+    # -- Auth --
+    @property
+    def auth_username(self) -> Optional[str]:
+        auth = self._data.get("auth", {})
+        u = auth.get("username", "")
+        return u if u else None
+
+    @property
+    def auth_password(self) -> Optional[str]:
+        auth = self._data.get("auth", {})
+        p = auth.get("password", "")
+        return p if p else None
+
+    @property
+    def auth_secret_key(self) -> str:
+        auth = self._data.get("auth", {})
+        key = auth.get("secret_key", "")
+        return key if key else secrets.token_hex(32)
+
+    @property
+    def auth_enabled(self) -> bool:
+        return bool(self.auth_username and self.auth_password)

@@ -17,6 +17,7 @@ class TaskStatus(Enum):
 class FileInfo:
     path: str
     size: int
+    sha: str = ""
     is_dir: bool = False
 
 
@@ -26,6 +27,7 @@ class SyncTask:
     repo_name: str
     github_download_url: str
     file_size: int
+    sha: str = ""
     status: TaskStatus = TaskStatus.PENDING
     error_message: Optional[str] = None
     retry_count: int = 0
@@ -71,6 +73,7 @@ class SyncState:
     last_sync_time: Optional[float] = None
     stop_requested: bool = False
     current_repo: Optional[str] = None
+    current_user: Optional[str] = None
 
     @property
     def progress_pct(self) -> float:
@@ -86,12 +89,14 @@ class SyncState:
         self.deleted_files = 0
         self.stop_requested = False
         self.current_repo = None
+        self.current_user = None
 
     def to_dict(self) -> dict:
         return {
             "is_running": self.is_running,
             "current_file": self.current_file,
             "current_repo": self.current_repo,
+            "current_user": self.current_user,
             "total_files": self.total_files,
             "completed_files": self.completed_files,
             "failed_files": self.failed_files,

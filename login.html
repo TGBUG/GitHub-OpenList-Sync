@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Login - GitHub Sync</title>
+<style>
+  :root{--bg:#0f1117;--card:#1a1d27;--border:#2a2d3a;--text:#c9d1d9;--text-dim:#8b949e;--accent:#58a6ff;--red:#f85149}
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text);display:flex;justify-content:center;align-items:center;min-height:100vh}
+  .login-box{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:32px;width:360px;max-width:90vw}
+  .login-box h1{font-size:20px;margin-bottom:24px;text-align:center}
+  .field{margin-bottom:16px}
+  .field label{display:block;font-size:13px;color:var(--text-dim);margin-bottom:4px}
+  .field input{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:14px;outline:none}
+  .field input:focus{border-color:var(--accent)}
+  .error{color:var(--red);font-size:13px;margin-bottom:12px;display:none}
+  button{width:100%;padding:10px;background:var(--accent);color:#fff;border:none;border-radius:6px;font-size:14px;font-weight:500;cursor:pointer}
+  button:hover{opacity:0.85}
+</style>
+</head>
+<body>
+<div class="login-box">
+  <h1>GitHub Sync Dashboard</h1>
+  <form id="loginForm">
+    <div class="field">
+      <label for="username">Username</label>
+      <input type="text" id="username" name="username" autocomplete="username" required>
+    </div>
+    <div class="field">
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" autocomplete="current-password" required>
+    </div>
+    <div class="error" id="error"></div>
+    <button type="submit">Sign In</button>
+  </form>
+</div>
+<script>
+  document.getElementById('loginForm').addEventListener('submit', async function(e){
+    e.preventDefault();
+    const username = document.getElementById('username').value;
+    const password = document.getElementById('password').value;
+    try{
+      const r = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({username, password})
+      });
+      const d = await r.json();
+      if(d.ok){
+        window.location.href = '/';
+      } else {
+        const err = document.getElementById('error');
+        err.textContent = d.message || 'Login failed';
+        err.style.display = 'block';
+      }
+    } catch(ex){
+      const err = document.getElementById('error');
+      err.textContent = 'Network error';
+      err.style.display = 'block';
+    }
+  });
+</script>
+</body>
+</html>

@@ -123,6 +123,7 @@ def main():
 
     # Start dashboard in daemon thread
     dashboard = DashboardRunner(
+        config=config,
         sync_state=sync_state,
         failure_manager=failure_manager,
         sync_trigger=sync_trigger,

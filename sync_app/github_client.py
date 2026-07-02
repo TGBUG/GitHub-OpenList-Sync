@@ -73,9 +73,10 @@ class GitHubClient:
 
         raise RuntimeError("GitHub request failed after max retries")
 
-    def get_repos(self, username: str) -> list[dict]:
+    def get_repos(self, username: str, include_private: bool = False) -> list[dict]:
         """Fetch all non-fork repositories for a user. Returns list of repo dicts."""
         repos = []
+        private_count = 0
         page = 1
         while True:
             url = f"{self.BASE_URL}/users/{username}/repos"
@@ -93,20 +94,26 @@ class GitHubClient:
             for repo in data:
                 if repo.get("fork"):
                     continue
+                is_private = repo.get("private", False)
+                if is_private and not include_private:
+                    private_count += 1
+                    continue
                 repos.append({
                     "name": repo["name"],
                     "full_name": repo["full_name"],
                     "default_branch": repo["default_branch"],
                     "updated_at": repo["updated_at"],
                     "size": repo["size"],
-                    "private": repo["private"],
+                    "private": is_private,
+                    "owner": repo["owner"]["login"],
                 })
 
-            # Check if there are more pages
             if len(data) < 100:
                 break
             page += 1
 
+        if private_count > 0:
+            logger.info("Skipped %d private repo(s) for user %s (sync_private_repos=false)", private_count, username)
         logger.info("Fetched %d repositories for user %s", len(repos), username)
         return repos
 
@@ -142,6 +149,7 @@ class GitHubClient:
                 files.append(FileInfo(
                     path=item["path"],
                     size=size,
+                    sha=item.get("sha", ""),
                     is_dir=False,
                 ))
 

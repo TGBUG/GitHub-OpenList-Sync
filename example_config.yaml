@@ -1,15 +1,41 @@
-# GitHub → OpenList Sync Configuration
+# GitHub -> OpenList Sync Configuration
 # =====================================
 
 github:
-  username: ""                # GitHub username whose repositories to sync
-  token: ""                   # Optional: GitHub personal access token (increases rate limit to 5000/hr)
+  # --- Multi-user support (use one of the following) ---
+  # List of GitHub usernames to sync. Each user's repos go to target_directory/<username>/
+  usernames:
+    - ""
+  # Legacy single-user mode (ignored if usernames is set):
+  # username: ""
+
+  # Optional: GitHub personal access token (increases rate limit to 5000/hr)
+  # Required for: syncing private repos, higher API rate limits
+  token: ""
+
+  # Whether to sync private repositories in addition to public ones
+  # Set to true requires a valid GitHub token with repo scope permissions
+  # Default: false
+  sync_private_repos: false
+
+  # --- Repository filter ---
+  # Filter mode: "blacklist" (sync all except listed) or "whitelist" (only sync listed)
+  # Default: "blacklist"
+  filter_mode: "blacklist"
+
+  # List of repos to filter, format: "owner/repo_name"
+  # Examples:
+  #   blacklist mode: these repos will be SKIPPED
+  #   whitelist mode: ONLY these repos will be synced
+  repo_filter_list: []
+  #   - "myorg/old-project"
+  #   - "myorg/test-repo"
 
 openlist:
   base_url: ""                # OpenList instance URL (e.g. https://your-instance.oplist.org.cn)
   username: ""                # OpenList login username
   password: ""                # OpenList login password
-  target_directory: "/github-sync"  # Root directory on OpenList where synced repos will be placed
+  target_directory: "/github-sync"  # Root directory on OpenList where synced repos are placed
 
 sync:
   interval_hours: 6           # Time between automatic sync cycles
@@ -23,3 +49,11 @@ sync:
 web:
   host: "0.0.0.0"             # Dashboard listen address
   port: 8080                  # Dashboard web port
+
+# --- Web dashboard authentication (optional) ---
+# If configured, all dashboard pages and API endpoints will require login.
+# If omitted or left blank, the dashboard is accessible without authentication.
+auth:
+  username: ""                # Dashboard login username
+  password: ""                # Dashboard login password
+  secret_key: ""              # Flask session secret key (auto-generated random key if left empty)
