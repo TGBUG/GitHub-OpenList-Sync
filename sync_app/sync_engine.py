@@ -98,6 +98,12 @@ class SyncManifest:
             self._data.pop(self._repo_key(owner, repo), None)
             self._save()
 
+    def list_repos(self, owner: str) -> list[str]:
+        """Return repo names tracked in the manifest for a given owner."""
+        prefix = f"{owner}/"
+        with self._lock:
+            return [k[len(prefix):] for k in self._data if k.startswith(prefix)]
+
 
 class SyncEngine:
     def __init__(
@@ -203,6 +209,14 @@ class SyncEngine:
         repos = self.github.get_repos(username, include_private=include_private)
         if not repos:
             logger.warning("No repositories found for user '%s'", username)
+            # Clean up all manifest entries for this user (all repos deleted)
+            if self.config.mirror_delete:
+                stale_count = self._cleanup_stale_repos(username, set())
+                if stale_count:
+                    with self._state_lock:
+                        self.state.deleted_files += stale_count
+                    return {"repos_synced": 0, "files_uploaded": 0,
+                            "files_deleted": stale_count, "files_failed": 0}
             return {"repos_synced": 0, "files_uploaded": 0, "files_deleted": 0, "files_failed": 0}
 
         filtered_repos = []
@@ -220,10 +234,21 @@ class SyncEngine:
 
         if not filtered_repos:
             logger.warning("All repos filtered out for user '%s'", username)
+            # Even with zero repos, clean up stale manifest entries
+            if self.config.mirror_delete:
+                stale_count = self._cleanup_stale_repos(username, set())
+                if stale_count:
+                    return {"repos_synced": 0, "files_uploaded": 0,
+                            "files_deleted": stale_count, "files_failed": 0}
             return {"repos_synced": 0, "files_uploaded": 0, "files_deleted": 0, "files_failed": 0}
 
         upload_tasks: list[SyncTask] = []
         total_deleted = 0
+
+        # Clean up repos that exist in the manifest but are no longer on GitHub
+        if self.config.mirror_delete:
+            current_repo_names = {r["name"] for r in filtered_repos}
+            total_deleted += self._cleanup_stale_repos(username, current_repo_names)
 
         for repo in filtered_repos:
             if self.state.stop_requested:
@@ -335,11 +360,29 @@ class SyncEngine:
 
         return upload_tasks, delete_count
 
+    def _cleanup_stale_repos(self, username: str, current_repo_names: set[str]) -> int:
+        """Remove manifest entries and OpenList data for repos no longer on GitHub.
+
+        Returns the count of repos cleaned up.
+        """
+        count = 0
+        remote_dir = f"{self.config.openlist_target_directory}/{username}"
+        for tracked_repo in self.manifest.list_repos(username):
+            if tracked_repo in current_repo_names:
+                continue
+            logger.info("Repo '%s/%s' deleted from GitHub, cleaning up.", username, tracked_repo)
+            self.openlist.remove_files(remote_dir, [tracked_repo])
+            self.manifest.remove_repo(username, tracked_repo)
+            count += 1
+            with self._state_lock:
+                self.state.deleted_files += 1
+        if count:
+            logger.info("Cleaned up %d deleted repo(s) for user %s", count, username)
+        return count
+
     @staticmethod
     def _manifest_matches(gh_info: FileInfo, mf_entry: dict) -> bool:
         """Return True if the GitHub file matches the manifest entry.
-
-        Uses SHA when available (precise); falls back to size for old manifest entries.
         """
         mf_sha = mf_entry.get("sha")
         return gh_info.sha == mf_sha
