@@ -118,6 +118,13 @@ def main():
         logger.info("Running single sync cycle (--once mode)")
         summary = run_sync_cycle(engine, sync_state, state_file)
         logger.info("Summary: %s", summary)
+        if summary.get("errors"):
+            logger.error(
+                "Sync finished with %d error(s). Exiting with status 1 so that schedulers and "
+                "CI jobs can see the failure.", len(summary["errors"]),
+            )
+            logger.info("Done.")
+            sys.exit(1)
         logger.info("Done.")
         return
 
@@ -164,6 +171,9 @@ def main():
         summary = run_sync_cycle(engine, sync_state, state_file)
         logger.info("Cycle complete. Uploaded: %(files_uploaded)d, Failed: %(files_failed)d, Deleted: %(files_deleted)d",
                     summary)
+        if summary.get("errors"):
+            logger.error("Cycle had %d error(s); see the messages above. No deletions were made "
+                         "for the affected accounts.", len(summary["errors"]))
 
     logger.info("Shutdown complete.")
 

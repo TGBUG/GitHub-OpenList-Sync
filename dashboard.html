@@ -58,6 +58,9 @@
     </div>
   </div>
 
+  <!-- Last-cycle alerts: failures are surfaced here instead of only in the log -->
+  <div id="alertBox" style="display:none;margin:0 0 16px;padding:12px 14px;border-radius:8px;border:1px solid var(--orange);background:rgba(255,165,0,.08);font-size:13px;line-height:1.6;white-space:pre-wrap"></div>
+
   <!-- Controls -->
   <div class="card">
     <div class="card-title">Controls</div>
@@ -161,6 +164,34 @@
       document.getElementById('currentFile').textContent=(s.current_repo?('['+s.current_repo+'] '):'')+s.current_file;
     }else{
       taskDiv.style.display='none';
+    }
+
+    showAlerts(s);
+  }
+
+  // Surface last-cycle errors/warnings: a failed GitHub read means the cycle
+  // deliberately deleted nothing, and that must be visible here, not only in
+  // the log file.
+  function showAlerts(s){
+    const box=document.getElementById('alertBox');
+    const lines=[];
+    const warnings=s.last_warnings||[];
+    if(s.last_error){
+      box.style.borderColor='var(--red)';
+      lines.push('Last cycle ERROR (nothing was deleted because of it):');
+      lines.push('  '+s.last_error);
+    }else if(warnings.length){
+      box.style.borderColor='var(--orange)';
+      lines.push('Last cycle warnings:');
+    }
+    warnings.slice(0,5).forEach(w=>lines.push('  '+w));
+    if(warnings.length>5)lines.push('  ... and '+(warnings.length-5)+' more');
+    if(lines.length){
+      box.textContent=lines.join('\n');
+      box.style.display='block';
+    }else{
+      box.style.display='none';
+      box.textContent='';
     }
   }
 

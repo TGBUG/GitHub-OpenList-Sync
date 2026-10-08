@@ -11,7 +11,16 @@ github:
 
   # Optional: GitHub personal access token (increases rate limit to 5000/hr)
   # Required for: syncing private repos, higher API rate limits
+  # Surrounding whitespace is stripped automatically. An invalid/expired token
+  # is reported as an error and the account is skipped - it never causes files
+  # or repos to be deleted from OpenList.
   token: ""
+
+  # Whether a rejected token (401) may be retried WITHOUT authentication.
+  # Only public repositories are visible in that case, so private repos are
+  # never considered deleted while this fallback is active.
+  # Default: false (an unusable token is reported instead of silently ignored)
+  allow_unauthenticated_fallback: false
 
   # Whether to sync private repositories in addition to public ones
   # Set to true requires a valid GitHub token with repo scope permissions
@@ -45,6 +54,18 @@ sync:
   max_failures_per_minute: 10 # Pause sync if failures exceed this rate
   cooldown_minutes: 5         # Cooldown period after consecutive failures
   mirror_delete: true         # Delete files on OpenList that no longer exist on GitHub
+                              # Deletions only happen on positive evidence: a complete,
+                              # successful GitHub listing that omits the item. A failed,
+                              # partial or truncated listing deletes nothing.
+
+  # --- Delete guard (safety net for mirror_delete) ---
+  # Refuse a deletion burst that looks like a broken listing rather than real churn.
+  # Blocked when deletions >= delete_guard_min_count AND
+  #              deletions >  delete_guard_ratio * (known items)
+  # A blocked cycle keeps everything and reports a clear error. Confirm on GitHub,
+  # then re-run; use a ratio of 1.0 to disable the guard entirely.
+  delete_guard_min_count: 5   # never block fewer than this many deletions
+  delete_guard_ratio: 0.5     # block above this share of known repos/files (1.0 = off)
 
 web:
   host: "0.0.0.0"             # Dashboard listen address

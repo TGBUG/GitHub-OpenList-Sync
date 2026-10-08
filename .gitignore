@@ -9,3 +9,7 @@ config.yaml
 temp/
 
 .venv/
+
+__pycache__/
+
+*.pyc

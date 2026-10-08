@@ -22,6 +22,56 @@ class FileInfo:
 
 
 @dataclass
+class FileTree:
+    """The result of a repository file-tree lookup.
+
+    ``truncated`` is True when GitHub itself capped the response
+    (``"truncated": true``). A truncated tree is *incomplete*, so it must never
+    be used as evidence that a file was deleted upstream.
+    """
+
+    files: list[FileInfo] = field(default_factory=list)
+    truncated: bool = False
+
+    @property
+    def complete(self) -> bool:
+        return not self.truncated
+
+
+@dataclass
+class RepoInfo:
+    """A repository as reported by the GitHub API.
+
+    ``fetch_repos`` returns every repository owned by the account, including
+    forks and private ones, so that the sync engine can tell "this repository
+    exists but I am not syncing it" apart from "this repository is gone".
+    """
+
+    name: str
+    full_name: str
+    owner: str
+    default_branch: str = "main"
+    private: bool = False
+    fork: bool = False
+    updated_at: str = ""
+    size: int = 0
+
+    @classmethod
+    def from_api(cls, repo: dict) -> "RepoInfo":
+        owner = (repo.get("owner") or {}).get("login") or ""
+        return cls(
+            name=repo.get("name", ""),
+            full_name=repo.get("full_name") or f"{owner}/{repo.get('name', '')}",
+            owner=owner,
+            default_branch=repo.get("default_branch") or "main",
+            private=bool(repo.get("private", False)),
+            fork=bool(repo.get("fork", False)),
+            updated_at=repo.get("updated_at", ""),
+            size=repo.get("size", 0) or 0,
+        )
+
+
+@dataclass
 class SyncTask:
     file_path: str
     repo_name: str
@@ -74,6 +124,8 @@ class SyncState:
     stop_requested: bool = False
     current_repo: Optional[str] = None
     current_user: Optional[str] = None
+    last_error: Optional[str] = None
+    last_warnings: list[str] = field(default_factory=list)
 
     @property
     def progress_pct(self) -> float:
@@ -90,6 +142,8 @@ class SyncState:
         self.stop_requested = False
         self.current_repo = None
         self.current_user = None
+        self.last_error = None
+        self.last_warnings = []
 
     def to_dict(self) -> dict:
         return {
@@ -104,4 +158,6 @@ class SyncState:
             "last_sync_time": self.last_sync_time,
             "progress_pct": self.progress_pct,
             "stop_requested": self.stop_requested,
+            "last_error": self.last_error,
+            "last_warnings": self.last_warnings,
         }

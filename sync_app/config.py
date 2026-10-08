@@ -46,6 +46,14 @@ class Config:
             if sync[key] < 0:
                 raise ValueError(f"sync.{key} must be >= 0")
 
+        # Optional delete-guard settings (absent from older config files)
+        min_count = sync.get("delete_guard_min_count", 5)
+        if not isinstance(min_count, int) or min_count < 0:
+            raise ValueError("sync.delete_guard_min_count must be an integer >= 0")
+        ratio = sync.get("delete_guard_ratio", 0.5)
+        if not isinstance(ratio, (int, float)) or not 0 <= ratio <= 1:
+            raise ValueError("sync.delete_guard_ratio must be a number between 0 and 1")
+
         # Validate auth section if present
         auth = self._data.get("auth", {})
         if auth:
@@ -76,7 +84,20 @@ class Config:
     @property
     def github_token(self) -> Optional[str]:
         token = self._data["github"].get("token", "")
+        if isinstance(token, str):
+            # A token copied from a web page often keeps stray whitespace or a
+            # trailing newline, which GitHub answers with 401 Bad credentials.
+            token = token.strip()
         return token if token else None
+
+    @property
+    def allow_unauthenticated_fallback(self) -> bool:
+        """Whether a rejected token may be retried anonymously (public data only).
+
+        Default ``False``: a 401 aborts the user's cycle instead of quietly
+        continuing with a reduced view of the account.
+        """
+        return bool(self._data["github"].get("allow_unauthenticated_fallback", False))
 
     @property
     def sync_private_repos(self) -> bool:
@@ -145,6 +166,19 @@ class Config:
     @property
     def mirror_delete(self) -> bool:
         return self._data["sync"].get("mirror_delete", True)
+
+    @property
+    def delete_guard_min_count(self) -> int:
+        """Deletions below this many items are never blocked by the guard."""
+        return self._data["sync"].get("delete_guard_min_count", 5)
+
+    @property
+    def delete_guard_ratio(self) -> float:
+        """Block a deletion burst once it exceeds this fraction of known items.
+
+        Set to 1.0 to disable the guard entirely.
+        """
+        return float(self._data["sync"].get("delete_guard_ratio", 0.5))
 
     # -- Web --
     @property
